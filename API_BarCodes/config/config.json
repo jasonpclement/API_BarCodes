@@ -1,6 +1,3 @@
 {
-  "tickers": [
-    "EOD/AAPL"
-  ],
   "dbName": "database.db"
 }
