@@ -1,86 +1,104 @@
-"""
-This script runs the application using a development server.
-It contains the definition of routes and views for the application.
-"""
-
 from flask import Flask
-from flask import request, jsonify, make_response, abort
+from flask import make_response, jsonify, request
+from flask_restful import Resource, Api, reqparse
+import sqlite3 as sql
+import os
+import json
 
-import sqlite3
+
+### Pull in Config Data
+programConfig = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
+with open(programConfig) as json_data_file:
+    data = json.load(json_data_file)
+    myDb = data['dbName']
+
+
+
+
 app = Flask(__name__)
-
-# Make the WSGI interface available at the top level so wfastcgi can get it.
-wsgi_app = app.wsgi_app
-
-# temporary test data 
-netNewScans = [
-    {'id': 0,
-     'BarCodeID': 'BC100001',
-     'BeginTime': '2020-11-08 12:43:00',
-     'EndTime': '2020-11-08 12:58:00',
-     #Not 100% sure what we need for fields at this stage, but here's some placeholders
-     'Email': 'Jason.p.clement@gmail.com', 
-     'Phone': '2074913816'
-    },
-    {'id': 1,
-     'BarCodeID': 'BC200001',
-     'BeginTime': '2020-11-08 11:00:00',
-     'EndTime': '2020-11-08 11:15:00',
-     'Email': 'Kathryn.Clement@gmail.com',
-     'Phone': '2074913816'
-    },
-    {'id': 2,
-     'BarCodeID': 'BC100002',
-     'BeginTime': '2020-11-08 09:43:00',
-     'EndTime': '2020-11-08 10:58:00',
-     'Email': 'Jason.p.clement@gmail.com',
-     'Phone': '2074913816'
-    }
-]
+api = Api(app)
 
 
-@app.route('/')
-def index():
-    siteDef = ""
-    for scan in netNewScans:
-        scan['id']
-        siteDef = siteDef + (
-            f"<p>BarCodeID:{scan['BarCodeID']}" + 
-            f"\t\tBeginTime:{scan['BeginTime']}" + 
-            f"\t\tEndTime:{scan['EndTime']}</p>"
-        )
-       
-    return siteDef
 
-@app.route('/api/PushScanSingular', methods=['POST'])
-def PushScanSingular():
-    conn = sqlite3.connect('scans.db')
-    cur = conn.cursor()
+conn = sql.connect(myDb)
+conn.execute('CREATE TABLE IF NOT EXISTS Scans (id INTEGER PRIMARY KEY AUTOINCREMENT, BarCodeID TEXT, BeginTime datetime, EndTime datetime, Email TEXT, Phone TEXT)')
+conn.close()
+
+##endpoint that would be used in event we use singular message solution
+class scanEmission(Resource):
+    ##doubt we need a get - but just for testing...
+    def get(self):
+        with sql.connect(myDb) as con:
+            try:
+                sqlCmd = "SELECT BarCodeID, BeginTime, EndTime, Email, Phone FROM Scans"            
+                cur = con.cursor()
+                cur.execute(sqlCmd)
+                rows = cur.fetchall(); 
+
+            except Exception as e:  ##Revisit this to make more robust
+                con.rollback()
+                msg = f"({repr(e)})"
+            finally:
+                return rows
+
+    def post(self):
+        scanData = request.get_json()
+
+        with sql.connect(myDb) as con:
+            try:
+                BarCodeID = scanData['BarCodeID']
+                BeginTime = scanData['BeginTime']
+                EndTime = scanData['EndTime']
+                Email = scanData['Email']
+                Phone = scanData['Phone']
+         
+            
+                cur = con.cursor()
+                cur.execute("INSERT INTO Scans (BarCodeID,BeginTime,EndTime,Email,Phone) VALUES (?,?,?,?,?)",(BarCodeID,BeginTime,EndTime,Email,Phone))
+                con.commit()
+                msg = "Record successfully added"
+
+                #Add Messaging interface (for email and text stuff)
+
+                #Add Cisco Cam stuff
 
 
-    ##all_books = cur.execute('SELECT * FROM books;').fetchall()
-    #netNewScans
+            except Exception as e:  ##Revisit this to make more robust
+                con.rollback()
+                msg = f"({repr(e)})"
+            finally:
+                return msg
 
-    ##if not request.json or not 'title' in request.json:
-    ##    abort(400)
+##endpoint that would be used in event we use batched message solution
+class scanEmissions(Resource):
+    def post(self):
+        scanItems = request.get_json()
 
-    scansToSync = {
-        'title': request.json['title']
-    }
+        with sql.connect(myDb) as con:
+            cur = con.cursor()
+            try:
+                for scanItem in scanItems:
+                    BarCodeID = scanItem['BarCodeID']
+                    BeginTime = scanItem['BeginTime']
+                    EndTime = scanItem['EndTime']
+                    Email = scanItem['Email']
+                    Phone = scanItem['Phone']
+                             
+                    cur.execute("INSERT INTO Scans (BarCodeID,BeginTime,EndTime,Email,Phone) VALUES (?,?,?,?,?)",(BarCodeID,BeginTime,EndTime,Email,Phone))
+                con.commit()
+                msg = "Records successfully added"
+            except Exception as e:  ##Revisit this to make more robust
+                con.rollback()
+                msg = f"({repr(e)})"
+            finally:
+                return msg
 
-    return jsonify({'Scans': scansToSync}), 201
-
-
-@app.errorhandler(404)
-def not_found(error):
-    return make_response(jsonify({'error': 'Not found'}), 404)
-
+        
+api.add_resource(scanEmission, '/scanEmission')
+api.add_resource(scanEmissions, '/scanEmissions')
 
 if __name__ == '__main__':
     import os
     HOST = os.environ.get('SERVER_HOST', 'localhost')
-    try:
-        PORT = int(os.environ.get('SERVER_PORT', '5555'))
-    except ValueError:
-        PORT = 5555
+    #app.run(debug=True, host='0.0.0.0', port=80)
     app.run(HOST, 5100)
